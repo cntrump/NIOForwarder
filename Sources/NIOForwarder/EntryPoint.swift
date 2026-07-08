@@ -12,7 +12,7 @@ enum EntryPoint {
 
             let level = Logger.Level(configValue: args.logLevel ?? config.logLevel) ?? .info
             LoggingSystem.bootstrap { label in
-                var handler = StreamLogHandler.standardOutput(label: label)
+                var handler = FormattedLogHandler(label: label)
                 handler.logLevel = level
                 return handler
             }

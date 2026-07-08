@@ -19,6 +19,8 @@ final class UDPForwarder: @unchecked Sendable {
         self.rule = rule
         self.ruleStats = ruleStats
         self.eventLoopGroup = eventLoopGroup
+        var logger = logger
+        logger[metadataKey: "rule"] = "\(rule.name)"
         self.logger = logger
         self.sessionTimeoutSeconds = rule.udpSessionTimeoutSeconds ?? 60
     }
@@ -59,10 +61,12 @@ final class UDPForwarder: @unchecked Sendable {
     func relay(data: ByteBuffer, from clientAddress: SocketAddress) {
         guard let serverChannel = serverChannel else { return }
         let now = DispatchTime.now().uptimeNanoseconds
+        let bytes = data.readableBytes
 
-        ruleStats.recordSent(data.readableBytes)
+        ruleStats.recordSent(bytes)
 
         if let session = sessions[clientAddress] {
+            logger.trace("client->target \(bytes) bytes, session=\(session.sessionID)")
             session.targetChannel.writeAndFlush(data, promise: nil)
             sessions[clientAddress]?.lastActivity = now
             return
@@ -80,7 +84,9 @@ final class UDPForwarder: @unchecked Sendable {
 
             // Ensure session mutations happen on the server channel's event loop.
             self.serverChannel?.eventLoop.execute {
+                let sessionID = ConnectionIDGenerator.next()
                 let session = UDPSession(
+                    sessionID: sessionID,
                     targetChannel: targetChannel,
                     lastActivity: now
                 )
@@ -88,6 +94,8 @@ final class UDPForwarder: @unchecked Sendable {
                 self.ruleStats.recordConnectionOpened()
 
                 let handler = SessionTargetHandler(
+                    sessionID: sessionID,
+                    ruleName: self.rule.name,
                     clientAddress: clientAddress,
                     serverChannel: serverChannel,
                     ruleStats: self.ruleStats,
@@ -109,12 +117,14 @@ final class UDPForwarder: @unchecked Sendable {
                                 forwarder.ruleStats.recordConnectionClosed()
                             }
                         }
-                    }
+                    },
+                    logger: self.logger
                 )
 
                 targetChannel.pipeline.addHandler(handler).whenSuccess { _ in
                     targetChannel.writeAndFlush(data, promise: nil)
-                    self.logger.debug("UDP session created for '\(self.rule.name)': \(clientAddress) -> \(self.rule.targetHost):\(self.rule.targetPort)")
+                    self.logger.debug("UDP session created: \(clientAddress) -> \(self.rule.targetHost):\(self.rule.targetPort), session=\(sessionID)")
+                    self.logger.trace("client->target \(bytes) bytes, session=\(sessionID)")
                 }
             }
         }

@@ -1,0 +1,27 @@
+{
+  "logLevel": "info",
+  "statistics": {
+    "enabled": true,
+    "intervalSeconds": 60,
+    "logOnShutdown": true
+  },
+  "rules": [
+    {
+      "name": "tcp-to-local-ssh",
+      "protocol": "tcp",
+      "bindHost": "0.0.0.0",
+      "bindPort": 2222,
+      "targetHost": "127.0.0.1",
+      "targetPort": 22
+    },
+    {
+      "name": "udp-to-dns",
+      "protocol": "udp",
+      "bindHost": "0.0.0.0",
+      "bindPort": 5353,
+      "targetHost": "8.8.8.8",
+      "targetPort": 53,
+      "udpSessionTimeoutSeconds": 60
+    }
+  ]
+}

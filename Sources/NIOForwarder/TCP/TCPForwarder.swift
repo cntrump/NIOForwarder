@@ -14,6 +14,8 @@ final class TCPForwarder: @unchecked Sendable {
         self.rule = rule
         self.ruleStats = ruleStats
         self.eventLoopGroup = eventLoopGroup
+        var logger = logger
+        logger[metadataKey: "rule"] = "\(rule.name)"
         self.logger = logger
     }
 
@@ -51,14 +53,26 @@ final class TCPForwarder: @unchecked Sendable {
     }
 
     private func initializeClientChannel(_ channel: Channel) -> EventLoopFuture<Void> {
-        let clientHandler = TCPRelayHandler(direction: .clientToTarget, ruleStats: ruleStats, logger: logger)
+        let connectionID = ConnectionIDGenerator.next()
+        let clientHandler = TCPRelayHandler(
+            direction: .clientToTarget,
+            connectionID: connectionID,
+            ruleStats: ruleStats,
+            logger: logger
+        )
 
         return channel.pipeline.addHandler(clientHandler).flatMap { [weak self] () -> EventLoopFuture<Channel> in
             guard let self = self else {
                 channel.close(mode: .all, promise: nil)
                 return channel.eventLoop.makeFailedFuture(TCPForwarderError.forwarderDeallocated)
             }
-            let targetHandler = TCPRelayHandler(direction: .targetToClient, partner: channel, ruleStats: self.ruleStats, logger: self.logger)
+            let targetHandler = TCPRelayHandler(
+                direction: .targetToClient,
+                connectionID: connectionID,
+                partner: channel,
+                ruleStats: self.ruleStats,
+                logger: self.logger
+            )
             let bootstrap = ClientBootstrap(group: self.eventLoopGroup)
                 .channelInitializer { targetChannel in
                     targetChannel.pipeline.addHandler(targetHandler)
@@ -78,7 +92,7 @@ final class TCPForwarder: @unchecked Sendable {
             channel.closeFuture.whenComplete { _ in onClose() }
             targetChannel.closeFuture.whenComplete { _ in onClose() }
 
-            self.logger.debug("TCP connection established for '\(self.rule.name)': \(channel.remoteAddress?.description ?? "unknown") -> \(self.rule.targetHost):\(self.rule.targetPort)")
+            self.logger.debug("TCP connection established [conn=\(connectionID)]: \(channel.remoteAddress?.description ?? "unknown") -> \(self.rule.targetHost):\(self.rule.targetPort)")
         }.flatMapError { error in
             self.logger.warning("Failed to connect target for '\(self.rule.name)': \(error)")
             channel.close(mode: .all, promise: nil)

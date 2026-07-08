@@ -11,14 +11,25 @@ final class TCPRelayHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     private let direction: Direction
+    private let connectionID: String
     private var partner: Channel?
     private let ruleStats: RuleStats
     private let logger: Logger
 
-    init(direction: Direction, partner: Channel? = nil, ruleStats: RuleStats, logger: Logger) {
+    init(
+        direction: Direction,
+        connectionID: String,
+        partner: Channel? = nil,
+        ruleStats: RuleStats,
+        logger: Logger
+    ) {
         self.direction = direction
+        self.connectionID = connectionID
         self.partner = partner
         self.ruleStats = ruleStats
+        var logger = logger
+        logger[metadataKey: "conn"] = "\(connectionID)"
+        logger[metadataKey: "direction"] = "\(direction.rawValue)"
         self.logger = logger
     }
 
@@ -28,25 +39,29 @@ final class TCPRelayHandler: ChannelInboundHandler, @unchecked Sendable {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let buffer = unwrapInboundIn(data)
+        let bytes = buffer.readableBytes
+        logger.trace("Read \(bytes) bytes")
+
         guard let partner = partner else {
-            logger.warning("(\(direction.rawValue)) Dropping \(buffer.readableBytes) bytes, no partner")
+            logger.warning("Dropping \(bytes) bytes, no partner")
             return
         }
         if partner.isActive {
             switch direction {
             case .clientToTarget:
-                ruleStats.recordSent(buffer.readableBytes)
+                ruleStats.recordSent(bytes)
             case .targetToClient:
-                ruleStats.recordReceived(buffer.readableBytes)
+                ruleStats.recordReceived(bytes)
             }
             partner.writeAndFlush(buffer, promise: nil)
+            logger.trace("Relayed \(bytes) bytes")
         } else {
-            logger.debug("(\(direction.rawValue)) Partner not active, dropping data")
+            logger.debug("Partner not active, dropping \(bytes) bytes")
         }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        logger.debug("(\(direction.rawValue)) Channel inactive")
+        logger.debug("Channel inactive")
         if let partner = partner, partner.isActive {
             partner.close(mode: .all, promise: nil)
         }
@@ -54,7 +69,8 @@ final class TCPRelayHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        logger.debug("(\(direction.rawValue)) Error: \(error)")
+        let remoteAddress = context.channel.remoteAddress?.description ?? "unknown"
+        logger.warning("Channel error (remote: \(remoteAddress)): \(error)")
         if let partner = partner, partner.isActive {
             partner.close(mode: .all, promise: nil)
         }
